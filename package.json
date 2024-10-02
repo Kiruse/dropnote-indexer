@@ -1,18 +1,27 @@
 {
   "name": "@kiruse/dropnote-indexer",
-  "version": "0.1.0",
-  "type": "module",
-  "module": "src/index.ts",
-  "scripts": {
-    "prebuild": "rm -rf dist",
-    "build": "tsc",
-    "prepack": "bun run build"
-  },
+  "version": "0.1.1",
+  "author": "Kiruse",
+  "repository": "https://github.com/kiruse/dropnote-indexer",
+  "module": "dist/index.js",
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "@apophis-sdk/core": "^0.0.7-alpha.2",
     "typescript": "^5.0.0"
-  }
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./*": "./dist/*"
+  },
+  "description": "Cosmos Blockchain Indexer for the Dropnote Protocol",
+  "keywords": ["Cosmos Blockchain", "Web3", "Dropnote Protocol", "messaging", "cryptocurrency"],
+  "scripts": {
+    "prebuild": "rm -rf dist",
+    "build": "tsc",
+    "prepack": "bun run build"
+  },
+  "type": "module",
+  "types": "dist/index.d.ts"
 }

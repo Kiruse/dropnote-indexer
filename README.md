@@ -60,6 +60,40 @@ You may to save these txs to your database for the sake of forward compatibility
 
 You may also cancel the event to prevent it from being processed further. This is useful e.g. if you employ additional logic to filter out spam or levy a fee for the indexing of your users' messages.
 
+## Sending Dropnotes
+This library also comes with a standard `sendDropnote` method that can be used to send Dropnotes to the network which your indexer will then pick up. Additional methods for different types of Dropnotes such as Announcements will be added in the future.
+
+```typescript
+import { Cosmos } from '@apophis-sdk/core';
+import { network } from '@apophis-sdk/core/test-helpers.js';
+import { LocalSigner } from '@apophis-sdk/local-signer';
+import { sendDropnote } from '@kiruse/dropnote-indexer/send';
+
+const signer = LocalSigner.fromMnemonic('...');
+// recipient of your Dropnote (not of the tip!)
+const recipient = 'neutron1...';
+const message = 'Hello, world!';
+
+// the tip is always required as the indexer watches for Bank Send messages. however, for your
+// own indexer, it is sufficient to send 1untrn, which is 1-millionth of a NTRN. other indexers
+// may require a higher tip.
+const tip = Cosmos.coin(1n, 'untrn');
+
+const txhash = await sendDropnote({
+  network,
+  signer,
+  recipient,
+  message,
+  tip,
+  // optional indexer address which also receives the tip - defaults to dev wallet
+  indexerAddress: 'neutron1...',
+});
+```
+
+**Note** that, although the dev wallet is the default indexer address, it does not guarantee that your Dropnote will be indexed. It is merely the conventional standard address that all Dropnotes should be sent to if you wish to participate in the public network.
+
+**Note** also that you do not need to index your own address, you may simply use it to receive tips and index on the default address instead.
+
 # License
 The MIT License (MIT)
 Copyright © 2024 Kiruse

@@ -2,14 +2,22 @@ import { addresses as addr, addresses, Cosmos, type NetworkConfig } from '@apoph
 import { TendermintQuery as TQ } from '@apophis-sdk/core/query.js';
 import type { CosmosTransaction, CosmosEvent } from '@apophis-sdk/core/types.sdk.js';
 import { Event } from '@kiruse/typed-events';
-import { type TxEvent, type Note, type DropnoteSource } from './types.js';
+import { type TxEvent, type Note, type DropnoteSource, type IDropnoteKVStorage } from './types.js';
 import { DEV_PUBKEY } from './constants.js';
 import { getEventAttribute, warn } from './utils.js';
+
+type Unsub = () => void;
 
 // there are different possible prefixes, however, we currently only support this one
 const PREFIX_MESSAGE = 'dropnote:';
 
+export interface DropnoteIndexerOptions {
+  storage: IDropnoteKVStorage;
+}
+
 export class DropnoteIndexer {
+  #storage: IDropnoteKVStorage;
+
   /** An event triggered when a TX with a dropnote payload has been encountered.
    * This event is always emitted for every relevant tx, whether it is correctly formatted or not.
    * It is recommended to store these events for retroactive processing after future changes.
@@ -19,6 +27,38 @@ export class DropnoteIndexer {
   readonly onTx = Event<TxEvent>();
   readonly onNote = Event<{ members: string[], note: Omit<Note, 'convoId'> }>();
   readonly onError = Event<any>();
+
+  constructor({ storage }: DropnoteIndexerOptions) {
+    this.#storage = storage;
+  }
+
+  async watch(network: NetworkConfig, addrs?: string[]): Promise<Unsub> {
+    addrs ??= [addresses.compute(network, DEV_PUBKEY)];
+    addrs = addrs.filter(addr => addr.startsWith(network.addressPrefix));
+
+    const unsubs: Unsub[] = [];
+
+    addrs.forEach(addr => {
+      const unsub = this.watchAddr(network, addr);
+      unsubs.push(unsub);
+    });
+
+    // TODO: implement event watching
+    // unsubs.push(this.watchEvents(network));
+
+    const lastHeight = (await recoverLastHeight(network, this.#storage)) ?? (await getDefaultHeight(network));
+    await Promise.all(addrs.map(async addr => {
+      await this.scan(network, addr, lastHeight);
+    }));
+
+    Cosmos.ws(network).onBlock(async block => {
+      await this.#storage.set(`${network.name}.height`, block.header.height.toString());
+    });
+
+    return () => {
+      for (const unsub of unsubs) unsub();
+    };
+  }
 
   /** Scan the given blocks for Dropnotes. You may use `Cosmos.findBlockAt` from the
    * `@apophis-sdk/core` package to find the block at a given timestamp. However, note that blocks
@@ -57,7 +97,7 @@ export class DropnoteIndexer {
    * the dev wallet alongside your own address to ensure you capture all dropnotes.
    * @returns an "unwatch" function to stop watching.
    */
-  async watchAddr(network: NetworkConfig, addr?: string) {
+  watchAddr(network: NetworkConfig, addr?: string): Unsub {
     // onTx does not require an established connection so we can fire it off first
     const ws = Cosmos.ws(network);
     addr ??= addresses.compute(network, DEV_PUBKEY);
@@ -78,7 +118,6 @@ export class DropnoteIndexer {
     });
 
     // initialize websocket connection
-    await ws.ready();
     return unsub;
   }
 
@@ -95,7 +134,7 @@ export class DropnoteIndexer {
    * be watched.
    * @returns an "unwatch" function to stop watching.
    */
-  async watchEvents(network: NetworkConfig, addr?: string) {
+  watchEvents(network: NetworkConfig, addr?: string): Unsub {
     throw new Error('Not yet implemented');
   }
 
@@ -186,4 +225,17 @@ export class DropnoteIndexer {
   isDropnoteMemo(memo: string | undefined): memo is string {
     return Boolean(memo?.startsWith(PREFIX_MESSAGE));
   }
+}
+
+async function recoverLastHeight(network: NetworkConfig, storage: IDropnoteKVStorage) {
+  const height = await storage.get(`${network.name}.height`);
+  return typeof height === 'string' ? BigInt(height) : undefined;
+}
+
+/** The default height is ~30D ago assuming 3s block time */
+async function getDefaultHeight(network: NetworkConfig) {
+  const ws = Cosmos.ws(network);
+  await ws.ready();
+  const { block } = await ws.getBlock();
+  return block!.header.height - 864000n;
 }

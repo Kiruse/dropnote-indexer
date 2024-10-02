@@ -1,16 +1,18 @@
 {
   "name": "@kiruse/dropnote-indexer",
   "version": "0.1.0",
-  "module": "src/index.ts",
   "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "prebuild": "rm -rf dist",
+    "build": "tsc",
+    "prepack": "bun run build"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "@apophis-sdk/core": "^0.0.7-alpha.6",
+    "@apophis-sdk/core": "^0.0.7-alpha.2",
     "typescript": "^5.0.0"
-  },
-  "dependencies": {
-    "bech32": "^2.0.0"
   }
 }

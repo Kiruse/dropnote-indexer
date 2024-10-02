@@ -1,2 +1,2 @@
 [install.scopes]
-"@apophis-sdk" = "http://localhost:4873/"
+# "@apophis-sdk" = "http://localhost:4873/"

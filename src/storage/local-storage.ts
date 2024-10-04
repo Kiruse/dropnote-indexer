@@ -16,7 +16,7 @@ export interface IStorage {
 
 /** A KV storage implementation using `localStorage` - accordingly, this is only available in the browser. */
 export class LocalStorage implements IDropnoteKVStorage {
-  constructor(private readonly prefix: string, protected readonly backend: IStorage = global.localStorage) {}
+  constructor(private readonly prefix: string, protected readonly backend: IStorage = globalThis.localStorage) {}
 
   get(key: string) {
     const bytes = this.backend.getItem(`${this.prefix}::binary::${key}`);

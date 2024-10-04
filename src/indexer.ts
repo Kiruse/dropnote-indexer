@@ -176,7 +176,6 @@ export class DropnoteIndexer {
     txResult: { code?: number, txhash?: string, height: bigint, events: CosmosEvent[] },
     source: DropnoteSource,
   ): Promise<[string[], Note] | undefined> {
-    console.log('wtf');
     if (txResult.code) return;
 
     const sender = txResult.events.find(e => e.type === 'message')?.attributes.find(a => a.key === 'sender')?.value;

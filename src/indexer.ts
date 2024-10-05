@@ -1,21 +1,34 @@
-import { addresses as addr, addresses, Cosmos, type NetworkConfig } from '@apophis-sdk/core';
+import { addresses, Cosmos, type NetworkConfig } from '@apophis-sdk/core';
 import { TendermintQuery as TQ } from '@apophis-sdk/core/query.js';
 import type { CosmosTransaction, CosmosEvent } from '@apophis-sdk/core/types.sdk.js';
 import { Event } from '@kiruse/typed-events';
-import { type TxEvent, type Note, type DropnoteSource, type IDropnoteKVStorage } from './types.js';
+import { type TxEvent, type Note, type DropnoteSource, type IDropnoteKVStorage, type DropnoteTxResult } from './types.js';
 import { DEV_PUBKEY } from './constants.js';
-import { getEventAttribute, warn } from './utils.js';
+import { EventParsingError, MemoParsingError } from './errors.js';
+import { findSender } from './utils.js';
 
 type Unsub = () => void;
-
-// there are different possible prefixes, however, we currently only support this one
-const PREFIX_MESSAGE = 'dropnote:';
 
 export interface DropnoteIndexerOptions {
   storage: IDropnoteKVStorage;
 }
 
+export type DropnoteMemoHandler = (
+  indexer: DropnoteIndexer,
+  network: NetworkConfig,
+  tx: CosmosTransaction,
+  txResult: DropnoteTxResult,
+) => Promise<void>;
+
+export type DropnoteEventHandler = (
+  indexer: DropnoteIndexer,
+  network: NetworkConfig,
+  event: CosmosEvent,
+) => Promise<void>;
+
 export class DropnoteIndexer {
+  static #memoHandlers: Record<string, DropnoteMemoHandler> = {};
+  static #eventHandlers: Record<string, DropnoteEventHandler> = {};
   #storage: IDropnoteKVStorage;
 
   /** An event triggered when a TX with a dropnote payload has been encountered.
@@ -78,10 +91,11 @@ export class DropnoteIndexer {
       page.forEach(async response => {
         const tx = Cosmos.tryDecodeTx(response.tx);
         if (typeof tx === 'string') return; // malformed tx, ignore
-        this.onTx.emit({ tx, network, source: 'memo' });
-        this.processTx(network, tx, { ...response.tx_result, height: response.height }, 'memo').catch(e => this.onError.emit(e));
+        this.processTx(network, tx, { ...response.tx_result, height: response.height }).catch(e => this.onError.emit(e));
       });
     }
+
+    // TODO: get txs by dropnote events
   }
 
   /** Watch the given network for memos. This resembles the primary indexing method.
@@ -113,7 +127,6 @@ export class DropnoteIndexer {
           height: tx.height,
           txhash: tx.txhash,
         },
-        'memo',
       ).catch(e => this.onError.emit(e));
     });
 
@@ -173,56 +186,83 @@ export class DropnoteIndexer {
   async processTx(
     network: NetworkConfig,
     tx: CosmosTransaction,
-    txResult: { code?: number, txhash?: string, height: bigint, events: CosmosEvent[] },
-    source: DropnoteSource,
-  ): Promise<[string[], Note] | undefined> {
+    txResult: DropnoteTxResult,
+  ): Promise<void> {
     if (txResult.code) return;
 
-    const sender = txResult.events.find(e => e.type === 'message')?.attributes.find(a => a.key === 'sender')?.value;
-    if (!sender) return;
-
-    const txhash = txResult.txhash ?? await Cosmos.getTxHash(tx);
     let memo = tx.body?.memo;
-    if (!this.isDropnoteMemo(memo)) return;
+    const source: DropnoteSource | undefined =
+      this.isDropnoteMemo(memo) ? 'memo' :
+      this.isDropnoteEvent(txResult.events) ? 'events' :
+      undefined;
+    if (!source) return;
 
     // no matter whether this tx is fully compliant, we still emit it for forward compatibility
     const evTx = await this.onTx.emit({ tx, network, source });
     if (evTx.canceled) return;
 
-    // TODO: change behavior depending on message prefix
-    memo = memo.slice(PREFIX_MESSAGE.length);
-
-    let encrypted = false;
-    if (!memo.startsWith(`[`)) {
-      encrypted = true;
-      // TODO: implement decryption
-      throw new Error('Encryption not yet implemented');
+    switch (source) {
+      case 'memo': await this.processByMemo(network, tx, txResult); break;
+      case 'events': await this.processByEvents(network, tx, txResult); break;
     }
+  }
 
-    memo = memo.slice(1, -1);
-    const [recipient, ...messageParts] = memo.split(':');
-    const message = messageParts.join(':');
-    if (!message) {
-      console.warn(`Malformed message in tx ${txhash}:`, tx.body!.memo);
-      return;
-    }
+  /** Process a dropnote found in a memo. Called after `onTx` has been emitted. */
+  protected async processByMemo(
+    network: NetworkConfig,
+    tx: CosmosTransaction,
+    txResult: DropnoteTxResult,
+  ): Promise<void> {
+    let memo = tx.body!.memo;
+    const type = memo.split(':', 2)[0];
+    const subtype = type.split('.')[1] ?? 'message';
+    DropnoteIndexer.#memoHandlers[subtype]?.(this, network, tx, txResult).catch(
+      e => this.onError.emit(new MemoParsingError(network, tx, txResult, e))
+    );
+  }
 
-    const { block } = await Cosmos.ws(network).getBlock(txResult.height);
-    const note: Omit<Note, 'convoId'> = {
-      chain: network.name,
-      sender,
-      message,
-      encrypted,
-      timestamp: block.header.time,
-      txhash,
-    };
-
-    this.onNote.emit({ members: [sender, recipient].sort(), note });
+  /** Process a dropnote found in events. Called after `onTx` has been emitted. */
+  protected async processByEvents(
+    network: NetworkConfig,
+    tx: CosmosTransaction,
+    txResult: DropnoteTxResult,
+  ): Promise<void> {
+    const events = txResult.events.filter(e => e.type === 'dropnote');
+    events.forEach(event => {
+      const subtype = event.attributes.find(a => a.key === 'type')?.value;
+      if (!subtype) return;
+      DropnoteIndexer.#eventHandlers[subtype]?.(this, network, event).catch(
+        e => this.onError.emit(new EventParsingError(network, tx, txResult, event, e))
+      );
+    });
   }
 
   /** Checks whether the given memo is a dropnote memo. Can be overridden to support custom memo formats. */
   isDropnoteMemo(memo: string | undefined): memo is string {
-    return Boolean(memo?.startsWith(PREFIX_MESSAGE));
+    return memo?.match(/^dropnote(\.\w+)?:/i) !== null;
+  }
+
+  /** Checks whether the given events contain a dropnote event. */
+  isDropnoteEvent(events: CosmosEvent[]): boolean {
+    return events.some(e => e.type === 'dropnote');
+  }
+
+  /** Register a new handler for a specific memo subtype.
+   *
+   * @param subtype of the memo to handle. The only special case is `message` which is the default when no subtype is given (i.e. `dropnote:` memo prefix).
+   * @param handler to call when a memo with the given subtype is encountered.
+   */
+  static handleMemo(subtype: string, handler: DropnoteMemoHandler) {
+    this.#memoHandlers[subtype] = handler;
+  }
+
+  /** Register a new handler for a specific event subtype.
+   *
+   * @param subtype of the event to handle.
+   * @param handler to call when a event with the given subtype is encountered.
+   */
+  static handleEvent(subtype: string, handler: DropnoteEventHandler) {
+    this.#eventHandlers[subtype] = handler;
   }
 }
 
@@ -238,3 +278,43 @@ async function getDefaultHeight(network: NetworkConfig) {
   const { block } = await ws.getBlock();
   return block!.header.height - 864000n;
 }
+
+DropnoteIndexer.handleMemo('message', async (indexer, network, tx, txResult) => {
+  let memo = tx.body!.memo;
+  const txhash = txResult.txhash ?? Cosmos.getTxHash(tx);
+  const sender = findSender(txResult.events);
+  if (!sender) return;
+
+  memo = memo.slice(memo.indexOf(':') + 1);
+
+  let encrypted = false;
+  if (!memo.startsWith(`[`)) {
+    encrypted = true;
+    // TODO: implement decryption
+    throw new Error('Encryption not yet implemented');
+  }
+
+  memo = memo.slice(1, -1);
+  const [recipient, ...messageParts] = memo.split(':');
+  const message = messageParts.join(':');
+  if (!message) {
+    console.warn(`Malformed message in tx ${txhash}:`, tx.body!.memo);
+    return;
+  }
+
+  const { block } = await Cosmos.ws(network).getBlock(txResult.height);
+  const note: Omit<Note, 'convoId'> = {
+    chain: network.name,
+    sender,
+    message,
+    encrypted,
+    timestamp: block.header.time,
+    txhash,
+  };
+
+  indexer.onNote.emit({ note, members: [sender, recipient] });
+});
+
+DropnoteIndexer.handleEvent('message', async (indexer, network, event) => {
+  throw new Error('Not yet implemented');
+});

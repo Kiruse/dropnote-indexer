@@ -1,5 +1,5 @@
 import type { NetworkConfig } from '@apophis-sdk/core';
-import type { CosmosTransaction } from '@apophis-sdk/core/types.sdk.js';
+import type { CosmosEvent, CosmosTransaction } from '@apophis-sdk/core/types.sdk.js';
 
 export type DropnoteSource = 'memo' | 'events';
 
@@ -41,4 +41,11 @@ export interface IDropnoteKVStorage {
   set(key: string, value: string | Uint8Array): Promise<void>;
   delete(key: string): Promise<void>;
   keys(): Promise<string[]>;
+}
+
+export interface DropnoteTxResult {
+  code?: number;
+  txhash?: string;
+  height: bigint;
+  events: CosmosEvent[];
 }

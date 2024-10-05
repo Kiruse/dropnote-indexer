@@ -14,6 +14,8 @@ export function getEventAttribute(events: CosmosEvent[], event: string, attribut
     .map(a => a.value);
 }
 
+export const findSender = (events: CosmosEvent[]): string | undefined => getEventAttribute(events, 'message', 'sender')[0];
+
 export function warn(key: string, msg: string) {
   if (!warned.has(key)) {
     console.warn(msg);

@@ -2,7 +2,7 @@ import { addresses, Cosmos, type NetworkConfig } from '@apophis-sdk/core';
 import { TendermintQuery as TQ } from '@apophis-sdk/core/query.js';
 import type { CosmosTransaction, CosmosEvent } from '@apophis-sdk/core/types.sdk.js';
 import { Event } from '@kiruse/typed-events';
-import { type TxEvent, type Note, type DropnoteSource, type IDropnoteKVStorage, type DropnoteTxResult } from './types.js';
+import { type TxEvent, type Note, type DropnoteSource, type IDropnoteKVStorage, type DropnoteTxResult, type Announcement, WrappedEvent } from './types.js';
 import { DEV_PUBKEY } from './constants.js';
 import { EventParsingError, MemoParsingError } from './errors.js';
 import { findSender } from './utils.js';
@@ -23,7 +23,10 @@ export type DropnoteMemoHandler = (
 export type DropnoteEventHandler = (
   indexer: DropnoteIndexer,
   network: NetworkConfig,
+  tx: CosmosTransaction,
+  txResult: DropnoteTxResult,
   event: CosmosEvent,
+  index: number,
 ) => Promise<void>;
 
 export class DropnoteIndexer {
@@ -38,7 +41,8 @@ export class DropnoteIndexer {
    * You may cancel this event which will prevent it from being further processed & indexed.
    */
   readonly onTx = Event<TxEvent>();
-  readonly onNote = Event<{ members: string[], note: Omit<Note, 'convoId'> }>();
+  readonly onNote = Event<{ members: string[], note: Note }>();
+  readonly onAnnounce = Event<Announcement>();
   readonly onError = Event<any>();
 
   constructor({ storage }: DropnoteIndexerOptions) {
@@ -228,10 +232,10 @@ export class DropnoteIndexer {
     txResult: DropnoteTxResult,
   ): Promise<void> {
     const events = txResult.events.filter(e => e.type === 'dropnote');
-    events.forEach(event => {
+    events.forEach((event, index) => {
       const subtype = event.attributes.find(a => a.key === 'type')?.value;
       if (!subtype) return;
-      DropnoteIndexer.#eventHandlers[subtype]?.(this, network, event).catch(
+      DropnoteIndexer.#eventHandlers[subtype]?.(this, network, tx, txResult, event, index).catch(
         e => this.onError.emit(new EventParsingError(network, tx, txResult, event, e))
       );
     });
@@ -283,38 +287,136 @@ DropnoteIndexer.handleMemo('message', async (indexer, network, tx, txResult) => 
   let memo = tx.body!.memo;
   const txhash = txResult.txhash ?? Cosmos.getTxHash(tx);
   const sender = findSender(txResult.events);
-  if (!sender) return;
+  if (!sender)
+    throw new Error(`Failed to find sender for message event in tx memo ${txhash}: ${tx.body!.memo}`);
 
   memo = memo.slice(memo.indexOf(':') + 1);
 
-  let encrypted = false;
+  let encrypted = false, message: string, recipient: string;
   if (!memo.startsWith(`[`)) {
     encrypted = true;
     // TODO: implement decryption
     throw new Error('Encryption not yet implemented');
+  } else {
+    const tmp = memo.slice(1, -1);
+    const [p0, ...messageParts] = tmp.split(':');
+    recipient = p0;
+    message = messageParts.join(':');
   }
 
-  memo = memo.slice(1, -1);
-  const [recipient, ...messageParts] = memo.split(':');
-  const message = messageParts.join(':');
-  if (!message) {
-    console.warn(`Malformed message in tx ${txhash}:`, tx.body!.memo);
-    return;
-  }
+  if (!recipient || !message)
+    throw new Error(`Malformed message in tx memo ${txhash}: ${tx.body!.memo}`);
 
   const { block } = await Cosmos.ws(network).getBlock(txResult.height);
   const note: Omit<Note, 'convoId'> = {
+    txhash,
     chain: network.name,
+    index: 'memo',
     sender,
     message,
     encrypted,
     timestamp: block.header.time,
-    txhash,
   };
 
   indexer.onNote.emit({ note, members: [sender, recipient] });
 });
 
-DropnoteIndexer.handleEvent('message', async (indexer, network, event) => {
-  throw new Error('Not yet implemented');
+DropnoteIndexer.handleMemo('announce', async (indexer, network, tx, txResult) => {
+  let memo = tx.body!.memo;
+  const txhash = txResult.txhash ?? Cosmos.getTxHash(tx);
+  const sender = findSender(txResult.events);
+  if (!sender)
+    throw new Error(`Failed to find sender for announce event in tx memo ${txhash}: ${tx.body!.memo}`);
+
+  memo = memo.slice(memo.indexOf(':') + 1);
+
+  let encrypted = false, message: string;
+  if (!memo.startsWith(`[`)) {
+    encrypted = true;
+    // TODO: implement decryption
+    throw new Error('Encryption not yet implemented');
+  } else {
+    message = memo.slice(1, -1);
+  }
+
+  if (!message)
+    throw new Error(`Malformed announce event in tx memo ${txhash}: ${tx.body!.memo}`);
+
+  const { block } = await Cosmos.ws(network).getBlock(txResult.height);
+  indexer.onAnnounce.emit({
+    txhash,
+    chain: network.name,
+    index: 'memo',
+    message,
+    sender,
+    encrypted,
+    timestamp: block.header.time,
+  });
+});
+
+DropnoteIndexer.handleEvent('message', async (indexer, network, tx, txResult, event, index) => {
+  const ev = new WrappedEvent(event);
+  let message = ev.attr('message');
+  if (!message)
+    throw new Error(`No message found in message event in tx ${Cosmos.getTxHash(tx)}`);
+
+  const addr = ev.attr('_contract_address');
+  if (!addr)
+    throw new Error(`Failed to find _contract_address event attribute for message event in tx ${Cosmos.getTxHash(tx)}`);
+
+  const recipient = ev.attr('recipient');
+  if (!recipient)
+    throw new Error(`Failed to find recipient event attribute for message event in tx ${Cosmos.getTxHash(tx)}`);
+
+  const sender = ev.attr('sender');
+  const { block } = await Cosmos.ws(network).getBlock(txResult.height);
+
+  let encrypted = ev.attr('encrypted') === 'true';
+  if (encrypted) {
+    // TODO: implement decryption
+    throw new Error('Encryption not yet implemented');
+  }
+
+  indexer.onNote.emit({
+    members: [sender ?? addr, recipient],
+    note: {
+      txhash: Cosmos.getTxHash(tx),
+      chain: network.name,
+      index,
+      sender: sender ?? addr,
+      message,
+      encrypted,
+      timestamp: block.header.time,
+    },
+  });
+});
+
+DropnoteIndexer.handleEvent('announce', async (indexer, network, tx, txResult, event, index) => {
+  const ev = new WrappedEvent(event);
+  let message = ev.attr('message');
+  if (!message)
+    throw new Error(`No message found in announce event in tx ${Cosmos.getTxHash(tx)}`);
+
+  const addr = ev.attr('_contract_address');
+  if (!addr)
+    throw new Error(`Failed to find _contract_address event attribute for announce event in tx ${Cosmos.getTxHash(tx)}`);
+
+  const sender = ev.attr('sender');
+  const { block } = await Cosmos.ws(network).getBlock(txResult.height);
+
+  let encrypted = ev.attr('encrypted') === 'true';
+  if (encrypted) {
+    // TODO: implement decryption
+    throw new Error('Encryption not yet implemented');
+  }
+
+  indexer.onAnnounce.emit({
+    txhash: Cosmos.getTxHash(tx),
+    chain: network.name,
+    index,
+    message,
+    timestamp: block.header.time,
+    sender: sender ?? addr,
+    encrypted,
+  });
 });

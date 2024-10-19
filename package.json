@@ -1,6 +1,6 @@
 {
   "name": "@kiruse/dropnote-indexer",
-  "version": "0.1.2-fix.1",
+  "version": "0.1.3-rc.1",
   "author": "Kiruse",
   "repository": "https://github.com/kiruse/dropnote-indexer",
   "module": "dist/index.js",

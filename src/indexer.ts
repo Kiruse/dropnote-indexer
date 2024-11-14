@@ -41,7 +41,7 @@ export class DropnoteIndexer {
    * You may cancel this event which will prevent it from being further processed & indexed.
    */
   readonly onTx = Event<TxEvent>();
-  readonly onNote = Event<{ members: string[], note: Note }>();
+  readonly onNote = Event<{ members: string[], note: Note, network: NetworkConfig }>();
   readonly onAnnounce = Event<Announcement>();
   readonly onError = Event<any>();
 
@@ -120,18 +120,26 @@ export class DropnoteIndexer {
     const ws = Cosmos.ws(network);
     addr ??= addresses.compute(network, DEV_PUBKEY);
 
-    const query = new TQ().exact('transfer.recipient', addr);
-    const unsub = ws.onTx(query, async tx => {
-      if (tx.error) return;
-      this.processTx(
-        network,
-        tx.tx,
-        {
-          ...tx.result,
-          height: tx.height,
-          txhash: tx.txhash,
-        },
-      ).catch(e => this.onError.emit(e));
+    const unsub = ws.onBlock(async block => {
+      const query = new TQ()
+        .exact('transfer.recipient', addr)
+        .exact('tx.height', block.header.height);
+      const txs = await ws.searchTxs(query).all();
+      for (const tx of txs) {
+        const result = tx.tx_result;
+        const tx2 = Cosmos.tryDecodeTx(tx.tx);
+        if (result.code || typeof tx2 === 'string') continue;
+
+        this.processTx(
+          network,
+          tx2,
+          {
+            ...result,
+            height: tx.height,
+            txhash: tx.hash,
+          }
+        ).catch(e => this.onError.emit(e));
+      }
     });
 
     // initialize websocket connection
@@ -318,7 +326,7 @@ DropnoteIndexer.handleMemo('message', async (indexer, network, tx, txResult) => 
     timestamp: block.header.time,
   };
 
-  indexer.onNote.emit({ note, members: [sender, recipient] });
+  indexer.onNote.emit({ note, members: [sender, recipient], network });
 });
 
 DropnoteIndexer.handleMemo('announce', async (indexer, network, tx, txResult) => {
@@ -388,6 +396,7 @@ DropnoteIndexer.handleEvent('message', async (indexer, network, tx, txResult, ev
       encrypted,
       timestamp: block.header.time,
     },
+    network,
   });
 });
 

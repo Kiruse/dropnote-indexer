@@ -1,5 +1,6 @@
-import { addresses, Cosmos, type NetworkConfig } from '@apophis-sdk/core';
+import { addresses, type CosmosNetworkConfig } from '@apophis-sdk/core';
 import { TendermintQuery as TQ } from '@apophis-sdk/core/query.js';
+import { Cosmos } from '@apophis-sdk/cosmos';
 import type { CosmosTransaction, CosmosEvent } from '@apophis-sdk/core/types.sdk.js';
 import { Event } from '@kiruse/typed-events';
 import { type TxEvent, type Note, type DropnoteSource, type IDropnoteKVStorage, type DropnoteTxResult, type Announcement, WrappedEvent } from './types.js';
@@ -15,14 +16,14 @@ export interface DropnoteIndexerOptions {
 
 export type DropnoteMemoHandler = (
   indexer: DropnoteIndexer,
-  network: NetworkConfig,
+  network: CosmosNetworkConfig,
   tx: CosmosTransaction,
   txResult: DropnoteTxResult,
 ) => Promise<void>;
 
 export type DropnoteEventHandler = (
   indexer: DropnoteIndexer,
-  network: NetworkConfig,
+  network: CosmosNetworkConfig,
   tx: CosmosTransaction,
   txResult: DropnoteTxResult,
   event: CosmosEvent,
@@ -41,7 +42,7 @@ export class DropnoteIndexer {
    * You may cancel this event which will prevent it from being further processed & indexed.
    */
   readonly onTx = Event<TxEvent>();
-  readonly onNote = Event<{ members: string[], note: Note, network: NetworkConfig }>();
+  readonly onNote = Event<{ members: string[], note: Note, network: CosmosNetworkConfig }>();
   readonly onAnnounce = Event<Announcement>();
   readonly onError = Event<any>();
 
@@ -49,7 +50,7 @@ export class DropnoteIndexer {
     this.#storage = storage;
   }
 
-  async watch(network: NetworkConfig, addrs?: string[]): Promise<Unsub> {
+  async watch(network: CosmosNetworkConfig, addrs?: string[]): Promise<Unsub> {
     addrs ??= [addresses.compute(network, DEV_PUBKEY)];
     addrs = addrs.filter(addr => addr.startsWith(network.addressPrefix));
 
@@ -89,7 +90,7 @@ export class DropnoteIndexer {
    * @param fromHeight - block height to backtrack from. Defaults to current height - 864000 (30D assuming 3s block time).
    * @param toHeight - block height to backtrack to. Defaults to current height.
    */
-  async scan(network: NetworkConfig, addr?: string, fromHeight?: bigint, toHeight?: bigint) {
+  async scan(network: CosmosNetworkConfig, addr?: string, fromHeight?: bigint, toHeight?: bigint) {
     const cursor = await this.getTxs(network, addr, fromHeight, toHeight);
     for await (const page of cursor.pages()) {
       page.forEach(async response => {
@@ -115,7 +116,7 @@ export class DropnoteIndexer {
    * the dev wallet alongside your own address to ensure you capture all dropnotes.
    * @returns an "unwatch" function to stop watching.
    */
-  watchAddr(network: NetworkConfig, addr?: string): Unsub {
+  watchAddr(network: CosmosNetworkConfig, addr?: string): Unsub {
     // onTx does not require an established connection so we can fire it off first
     const ws = Cosmos.ws(network);
     addr ??= addresses.compute(network, DEV_PUBKEY);
@@ -159,7 +160,7 @@ export class DropnoteIndexer {
    * be watched.
    * @returns an "unwatch" function to stop watching.
    */
-  watchEvents(network: NetworkConfig, addr?: string): Unsub {
+  watchEvents(network: CosmosNetworkConfig, addr?: string): Unsub {
     throw new Error('Not yet implemented');
   }
 
@@ -170,7 +171,7 @@ export class DropnoteIndexer {
    * @param fromHeight - block height to backtrack from. Defaults to current height - 864000 (30D assuming 3s block time).
    * @param toHeight - block height to backtrack to. Defaults to current height.
    */
-  async getTxs(network: NetworkConfig, addr?: string, fromHeight?: bigint, toHeight?: bigint) {
+  async getTxs(network: CosmosNetworkConfig, addr?: string, fromHeight?: bigint, toHeight?: bigint) {
     const ws = Cosmos.ws(network);
     await ws.ready();
 
@@ -196,7 +197,7 @@ export class DropnoteIndexer {
 
   /** Processes the given tx */
   async processTx(
-    network: NetworkConfig,
+    network: CosmosNetworkConfig,
     tx: CosmosTransaction,
     txResult: DropnoteTxResult,
   ): Promise<void> {
@@ -221,7 +222,7 @@ export class DropnoteIndexer {
 
   /** Process a dropnote found in a memo. Called after `onTx` has been emitted. */
   protected async processByMemo(
-    network: NetworkConfig,
+    network: CosmosNetworkConfig,
     tx: CosmosTransaction,
     txResult: DropnoteTxResult,
   ): Promise<void> {
@@ -235,7 +236,7 @@ export class DropnoteIndexer {
 
   /** Process a dropnote found in events. Called after `onTx` has been emitted. */
   protected async processByEvents(
-    network: NetworkConfig,
+    network: CosmosNetworkConfig,
     tx: CosmosTransaction,
     txResult: DropnoteTxResult,
   ): Promise<void> {
@@ -278,13 +279,13 @@ export class DropnoteIndexer {
   }
 }
 
-async function recoverLastHeight(network: NetworkConfig, storage: IDropnoteKVStorage) {
+async function recoverLastHeight(network: CosmosNetworkConfig, storage: IDropnoteKVStorage) {
   const height = await storage.get(`${network.name}.height`);
   return typeof height === 'string' ? BigInt(height) : undefined;
 }
 
 /** The default height is ~30D ago assuming 3s block time */
-async function getDefaultHeight(network: NetworkConfig) {
+async function getDefaultHeight(network: CosmosNetworkConfig) {
   const ws = Cosmos.ws(network);
   await ws.ready();
   const { block } = await ws.getBlock();

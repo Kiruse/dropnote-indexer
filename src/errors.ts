@@ -1,5 +1,6 @@
-import { Cosmos, type NetworkConfig } from '@apophis-sdk/core';
+import { type NetworkConfig } from '@apophis-sdk/core';
 import type { CosmosEvent, CosmosTransaction } from '@apophis-sdk/core/types.sdk.js';
+import { Cosmos } from '@apophis-sdk/cosmos';
 import type { DropnoteTxResult } from './types';
 
 export class DropnoteIndexerError extends Error {

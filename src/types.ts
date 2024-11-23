@@ -1,17 +1,17 @@
-import type { NetworkConfig } from '@apophis-sdk/core';
+import type { CosmosNetworkConfig } from '@apophis-sdk/core';
 import type { CosmosEvent, CosmosTransaction } from '@apophis-sdk/core/types.sdk.js';
 
 export type DropnoteSource = 'memo' | 'events';
 
 export interface TxEvent {
-  network: NetworkConfig;
+  network: CosmosNetworkConfig;
   tx: CosmosTransaction;
   /** The data source that was used to find this tx. */
   source: DropnoteSource;
 }
 
 export interface NoteEvent {
-  network: NetworkConfig;
+  network: CosmosNetworkConfig;
   /** The transaction that this note was found in. */
   tx: CosmosTransaction;
   /** The data source that was used to find this note. */

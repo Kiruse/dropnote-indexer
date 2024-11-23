@@ -1,11 +1,12 @@
-import { addresses, Cosmos, type NetworkConfig, type Signer } from '@apophis-sdk/core';
-import { BankSendMsg } from '@apophis-sdk/core/msg/bank.js';
+import { addresses, type CosmosNetworkConfig, type Signer } from '@apophis-sdk/core';
 import type { Coin } from '@apophis-sdk/core/types.sdk.js';
+import { Cosmos } from '@apophis-sdk/cosmos';
+import { BankSendMsg } from '@apophis-sdk/cosmos/msg/bank.js';
 import { DEV_PUBKEY } from './constants';
 
 export interface SendDropnoteOptions {
   /** The network you wish to send the Dropnote on. */
-  network: NetworkConfig;
+  network: CosmosNetworkConfig;
   /** The signer you wish to use to send the message with. */
   signer: Signer;
   /** The recipient of your message.

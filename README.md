@@ -11,19 +11,27 @@ npm install @apophis-sdk/core @kiruse/dropnote-indexer
 ## Usage
 
 ```ts
-import { connections, Cosmos } from '@apophis-sdk/core';
-import { network } from '@apophis-sdk/core/test-helpers.js';
+import { Apophis, Cosmos, DefaultCosmosMiddlewares } from '@apophis-sdk/cosmos';
 import { DropnoteIndexer } from '@kiruse/dropnote-indexer';
 import { JsonStorage } from '@kiruse/dropnote-indexer/storage/json-storage';
 import { DateTime } from 'luxon';
 
-// configure Neutron testnet endpoints
-// currently, you must manually configure at least WS endpoints for each network.
-connections.setRest(network, 'https://rest-falcron.pion-1.ntrn.tech');
-connections.setRpc(network, 'https://rpc-falcron.pion-1.ntrn.tech');
-connections.setWs(network, 'wss://rpc-falcron.pion-1.ntrn.tech/websocket');
+Apophis.use(...DefaultCosmosMiddlewares);
+
+// fetch neutron testnet network from registry & add custom endpoints
+// although the retrieved network config already contains endpoints, I found not all of them are
+// reliable, so I recommend always adding your own custom endpoints.
+const network = {
+  ...(await Cosmos.getNetworkFromRegistry('neutrontestnet')),
+  endpoints: {
+    rest: ['https://rest-falcron.pion-1.ntrn.tech'],
+    rpc: ['https://rpc-falcron.pion-1.ntrn.tech'],
+    ws: ['wss://rpc-falcron.pion-1.ntrn.tech/websocket'],
+  },
+};
 
 const indexer = new DropnoteIndexer({
+  // there are different storage implementations available, or you can bring your own
   storage: new JsonStorage('./db.json'),
 });
 
@@ -64,10 +72,13 @@ You may also cancel the event to prevent it from being processed further. This i
 This library also comes with a standard `sendDropnote` method that can be used to send Dropnotes to the network which your indexer will then pick up. Additional methods for different types of Dropnotes such as Announcements will be added in the future.
 
 ```typescript
-import { Cosmos } from '@apophis-sdk/core';
-import { network } from '@apophis-sdk/core/test-helpers.js';
-import { LocalSigner } from '@apophis-sdk/local-signer';
+import { Apophis, Cosmos, DefaultCosmosMiddlewares } from '@apophis-sdk/cosmos';
+import { LocalSigner } from '@apophis-sdk/cosmos/local-signer';
 import { sendDropnote } from '@kiruse/dropnote-indexer/send';
+
+Apophis.use(...DefaultCosmosMiddlewares);
+
+// you may want to configure other signers from @apophis-sdk/cosmos-signers for frontend support
 
 const signer = LocalSigner.fromMnemonic('...');
 // recipient of your Dropnote (not of the tip!)
@@ -78,6 +89,8 @@ const message = 'Hello, world!';
 // own indexer, it is sufficient to send 1untrn, which is 1-millionth of a NTRN. other indexers
 // may require a higher tip.
 const tip = Cosmos.coin(1n, 'untrn');
+
+const network = await Cosmos.getNetworkFromRegistry('neutrontestnet');
 
 const txhash = await sendDropnote({
   network,

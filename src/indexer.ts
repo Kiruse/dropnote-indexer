@@ -1,5 +1,5 @@
 import { addresses, type CosmosNetworkConfig } from '@apophis-sdk/core';
-import { TendermintQuery as TQ } from '@apophis-sdk/core/query.js';
+import { TendermintQuery as TQ } from '@apophis-sdk/cosmos/tmquery.js';
 import { Cosmos } from '@apophis-sdk/cosmos';
 import type { CosmosTransaction, CosmosEvent } from '@apophis-sdk/core/types.sdk.js';
 import { Event } from '@kiruse/typed-events';

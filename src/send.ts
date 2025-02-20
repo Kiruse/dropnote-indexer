@@ -1,7 +1,6 @@
 import { addresses, type CosmosNetworkConfig, type Signer } from '@apophis-sdk/core';
 import type { Coin } from '@apophis-sdk/core/types.sdk.js';
-import { Cosmos } from '@apophis-sdk/cosmos';
-import { BankSendMsg } from '@apophis-sdk/cosmos/msg/bank.js';
+import { Bank, Cosmos } from '@apophis-sdk/cosmos';
 import { DEV_PUBKEY } from './constants';
 
 export interface SendDropnoteOptions {
@@ -35,17 +34,17 @@ export async function getDropnoteTx({ network, ...opts }: SendDropnoteOptions) {
 
   const tx = Cosmos.tx([
     // "ping" dev wallet
-    new BankSendMsg(
-      userAddress,
-      devAddress,
-      [Cosmos.coin(1n, opts.tip.denom)],
-    ).toAny(network),
+    new Bank.Send({
+      fromAddress: userAddress,
+      toAddress: devAddress,
+      amount: [Cosmos.coin(1n, opts.tip.denom)],
+    }),
     // "ping" indexer wallet w/ tip
-    new BankSendMsg(
-      userAddress,
-      opts.indexerAddress ?? addresses.compute(network, DEV_PUBKEY),
-      [opts.tip],
-    ).toAny(network),
+    new Bank.Send({
+      fromAddress: userAddress,
+      toAddress: opts.indexerAddress ?? addresses.compute(network, DEV_PUBKEY),
+      amount: [opts.tip],
+    }),
   ]);
 
   // TODO: implement encryption
